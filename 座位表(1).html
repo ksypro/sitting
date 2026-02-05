@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>互動式課室座位表 (S4 & S5) - 隋唐問答版</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React and ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- html2canvas for image export -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    
+    <!-- Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <style>
+        body {
+            background-color: #f3f4f6;
+            font-family: "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+            -webkit-user-select: none; /* Safari */
+            -ms-user-select: none; /* IE 10 and IE 11 */
+            user-select: none; /* Standard syntax */
+        }
+        .seat-card {
+            transition: all 0.2s ease;
+            touch-action: manipulation;
+        }
+        .seat-card:active {
+            transform: scale(0.95);
+        }
+        .dragging {
+            opacity: 0.5;
+            border: 2px dashed #3b82f6;
+        }
+        .drag-over {
+            background-color: #e0f2fe;
+            border: 2px dashed #3b82f6;
+            transform: scale(1.02);
+        }
+        /* Winner Animation */
+        @keyframes pulse-gold {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(234, 179, 8, 0.7); border-color: #eab308; }
+            50% { box-shadow: 0 0 0 10px rgba(234, 179, 8, 0); border-color: #facc15; }
+        }
+        .winner-card {
+            animation: pulse-gold 1.5s infinite;
+            background-color: #fef9c3 !important; /* Yellow-50 */
+            border-color: #eab308 !important; /* Yellow-500 */
+            z-index: 10;
+            transform: scale(1.05);
+        }
+        /* Score Animation */
+        @keyframes pop-score {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.4); color: #16a34a; }
+            100% { transform: scale(1); }
+        }
+        .score-pop {
+            animation: pop-score 0.3s ease-out;
+        }
+        /* UI Animations */
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        .animate-fade-in {
+            animation: fadeIn 0.2s ease-out;
+        }
+        @keyframes fadeInDown {
+            from { opacity: 0; transform: translate(-50%, -20px); }
+            to { opacity: 1; transform: translate(-50%, 0); }
+        }
+        .animate-fade-in-down {
+            animation: fadeInDown 0.3s ease-out forwards;
+        }
+        @media print {
+            .no-print {
+                display: none;
+            }
+            .print-area {
+                width: 100%;
+                border: none;
+                box-shadow: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // --- 隋唐歷史題庫 (45題) ---
+        const HISTORY_QUESTIONS = [
+            { q: "隋朝的建立者是誰？", a: "隋文帝（楊堅）" },
+            { q: "隋文帝開創的盛世稱為什麼？", a: "開皇之治" },
+            { q: "隋唐時期中央實行的核心政治制度是什麼？", a: "三省六部制" },
+            { q: "隋朝哪位皇帝下令開鑿了大運河？", a: "隋煬帝（楊廣）" },
+            { q: "唐朝的建立者是誰？", a: "唐高祖（李淵）" },
+            { q: "「貞觀之治」是哪位皇帝的統治時期？", a: "唐太宗（李世民）" },
+            { q: "中國歷史上唯一的女皇帝是誰？", a: "武則天" },
+            { q: "唐玄宗早期的盛世稱為什麼？", a: "開元之治" },
+            { q: "導致唐朝由盛轉衰的重大動亂是什麼？", a: "安史之亂" },
+            { q: "安史之亂的兩位主要發起人是誰？", a: "安祿山、史思明" },
+            { q: "隋文帝廢除九品中正制，改行什麼選官制度？", a: "科舉制" },
+            { q: "三省六部制中，負責「起草」詔令的是哪個省？", a: "中書省" },
+            { q: "三省六部制中，負責「審核」詔令的是哪個省？", a: "門下省" },
+            { q: "三省六部制中，負責「執行」政令的是哪個省？", a: "尚書省" },
+            { q: "唐朝初期的兵制是什麼（兵農合一）？", a: "府兵制" },
+            { q: "唐玄宗時期，府兵制崩壞，改行什麼兵制？", a: "募兵制（彍騎）" },
+            { q: "唐朝前期實行的土地制度稱為什麼？", a: "均田制" },
+            { q: "唐朝前期實行的賦稅制度（以人丁為本）稱為什麼？", a: "租庸調制" },
+            { q: "安史之亂後，唐德宗時由楊炎建議改行什麼新稅制？", a: "兩稅法" },
+            { q: "隋朝大運河的中心在於哪裡？", a: "洛陽" },
+            { q: "唐太宗時，哪位吐蕃贊普迎娶了文成公主？", a: "松贊干布" },
+            { q: "唐太宗被西北各族君主尊稱為什麼？", a: "天可汗" },
+            { q: "導致唐朝滅亡的民變是什麼？", a: "黃巢之亂" },
+            { q: "唐朝最後被誰篡位而滅亡，建立後梁？", a: "朱溫" },
+            { q: "安史之亂平定後，唐朝出現了什麼地方割據的局面？", a: "藩鎮割據" },
+            { q: "唐憲宗時期，暫時平定藩鎮，史稱什麼？", a: "元和中興" },
+            { q: "唐朝中後期，中央權力常被哪種人把持（如擁立皇帝）？", a: "宦官" },
+            { q: "發生在唐朝玄武門的政變，使誰登上了皇位？", a: "唐太宗（李世民）" },
+            { q: "隋文帝為減輕刑罰，制定了什麼著名的法典？", a: "《開皇律》" },
+            { q: "唐朝哪位高僧西行求法，帶回大量佛經？", a: "玄奘" },
+            { q: "唐朝哪位高僧六次東渡日本傳法？", a: "鑑真" },
+            { q: "隋朝因哪次對外戰爭失利而導致國力大衰？", a: "三徵高句麗" },
+            { q: "唐朝名相魏徵以什麼著稱？", a: "直諫（敢於勸諫皇帝）" },
+            { q: "武則天改國號為什麼？", a: "周" },
+            { q: "開元之治時期，唐玄宗任用了哪兩位著名的賢相？", a: "姚崇、宋璟" },
+            { q: "安史之亂爆發於哪一年？", a: "755年" },
+            { q: "兩稅法的徵稅原則主要依據什麼？", a: "資產（田畝/財產）" },
+            { q: "唐朝長安城的佈局特點是什麼（住宅區與商業區分開）？", a: "坊市分離 / 棋盤狀佈局" },
+            { q: "唐玄宗寵信哪位妃子，被認為是安史之亂的導火線之一？", a: "楊貴妃" },
+            { q: "唐朝宰相李林甫口蜜腹劍，他在位期間重用什麼人擔任節度使？", a: "胡人（蕃將）" },
+            { q: "唐朝時，日本派遣到中國學習的使節稱為什麼？", a: "遣唐使" },
+            { q: "唐代三省制的最高長官（宰相）通常在哪裡議事？", a: "政事堂" },
+            { q: "隋文帝在位期間，在地方行政上將三級制改為什麼制？", a: "州縣二級制" },
+            { q: "唐朝哪位詩人被稱為「詩仙」？", a: "李白" },
+            { q: "唐朝哪位詩人被稱為「詩聖」？", a: "杜甫" }
+        ];
+
+        // --- 學生名單資料庫 ---
+        const S4_STUDENTS = [
+            "錢均豪", "梁子灝", "黎裕樺", "文澤林", "彭勇杰", "楊德源",
+            "馮雪瑩", "紀凱欣", "徐梓彤", "賴達誠", "潘康健", "林健儀",
+            "譚伊迅", "陳嘉豪", "陳金納", "李嘉家", "朱冰冰", "馮詠琛",
+            "黎紀言", "蘇泳儀", "區梓灝", "李嘉晋", "王寅紳", "黃栩誠",
+            "尹星富", "陳綺君", "劉芍妍", "劉凱琪", "梁鎂怡", "譚芷琳"
+        ];
+
+        const S5_STUDENTS = [
+            "鄭焯灝", "莊俊星", "周曉嵐", "李沁洳", "林瑞亨", "黃頌然",
+            "陳琪茵", "高梓善", "蘇子晴", "甄藹儀", "林荃昕", "李靖甫",
+            "鄧思朗", "張巧言", "林小暄", "施淨萱", "唐鐥楠", "黃依茗",
+            "余卓婷", "劉俊樂", "鄭泳恩"
+        ];
+
+        // --- 班級組件 ---
+        const Classroom = ({ classId, initialStudentList }) => {
+            const fullList = [...initialStudentList, ...Array(30 - initialStudentList.length).fill("")];
+            
+            // Keys
+            const STORAGE_KEY_SEATS = `classSeatingPlan_${classId}`;
+            const STORAGE_KEY_COUNTS = `classStudentCounts_${classId}`;
+            const STORAGE_KEY_SCORES = `classStudentScores_${classId}`;
+
+            const [seats, setSeats] = useState(fullList);
+            const [callCounts, setCallCounts] = useState({}); 
+            const [scores, setScores] = useState({}); 
+            
+            const [draggedIndex, setDraggedIndex] = useState(null);
+            const [dragOverIndex, setDragOverIndex] = useState(null);
+            const [selectedSeatIndex, setSelectedSeatIndex] = useState(null); 
+            
+            const [picking, setPicking] = useState(false);
+            const [pickedIndex, setPickedIndex] = useState(null);
+            
+            // Question Modal State
+            const [showQModal, setShowQModal] = useState(false);
+            const [currentQuestion, setCurrentQuestion] = useState(null);
+            const [showAnswer, setShowAnswer] = useState(false);
+            const [currentStudentForQ, setCurrentStudentForQ] = useState("");
+
+            const [isScoringMode, setIsScoringMode] = useState(false);
+            const [notification, setNotification] = useState(null);
+            const [confirmModal, setConfirmModal] = useState({ show: false, title: '', message: '', onConfirm: null });
+
+            const printRef = useRef(null);
+            const fileInputRef = useRef(null);
+
+            useEffect(() => {
+                const savedSeats = localStorage.getItem(STORAGE_KEY_SEATS);
+                const savedCounts = localStorage.getItem(STORAGE_KEY_COUNTS);
+                const savedScores = localStorage.getItem(STORAGE_KEY_SCORES);
+
+                if (savedSeats) {
+                    try { const parsed = JSON.parse(savedSeats); if (parsed.length === 30) setSeats(parsed); } catch (e) { console.error(e); }
+                } else { setSeats(fullList); }
+                
+                if (savedCounts) { try { setCallCounts(JSON.parse(savedCounts)); } catch (e) {} } else { setCallCounts({}); }
+                if (savedScores) { try { setScores(JSON.parse(savedScores)); } catch (e) {} } else { setScores({}); }
+
+                setSelectedSeatIndex(null);
+                setPickedIndex(null);
+                setIsScoringMode(false);
+                setShowQModal(false);
+            }, [classId]); 
+
+            useEffect(() => { localStorage.setItem(STORAGE_KEY_SEATS, JSON.stringify(seats)); }, [seats, classId]);
+            useEffect(() => { localStorage.setItem(STORAGE_KEY_COUNTS, JSON.stringify(callCounts)); }, [callCounts, classId]);
+            useEffect(() => { localStorage.setItem(STORAGE_KEY_SCORES, JSON.stringify(scores)); }, [scores, classId]);
+
+            const showNotification = (msg) => {
+                setNotification(msg);
+                setTimeout(() => setNotification(null), 2000);
+            };
+
+            // --- 隨機發問邏輯 (更新版) ---
+            const handleRandomPick = () => {
+                if (picking || isScoringMode) return;
+                const occupiedIndices = seats.map((s, i) => s ? i : -1).filter(i => i !== -1);
+                if (occupiedIndices.length === 0) {
+                    showNotification("沒有學生可以提問！");
+                    return;
+                }
+                
+                setPicking(true);
+                setPickedIndex(null);
+                
+                let steps = 0;
+                const interval = setInterval(() => {
+                    const randomIdx = occupiedIndices[Math.floor(Math.random() * occupiedIndices.length)];
+                    setPickedIndex(randomIdx);
+                    steps++;
+                    if (steps > 20) {
+                        clearInterval(interval);
+                        
+                        // 選定學生
+                        const finalIdx = occupiedIndices[Math.floor(Math.random() * occupiedIndices.length)];
+                        setPickedIndex(finalIdx);
+                        const studentName = seats[finalIdx];
+                        
+                        // 增加計數
+                        setCallCounts(prev => ({ ...prev, [studentName]: (prev[studentName] || 0) + 1 }));
+                        
+                        // 準備問題彈窗
+                        const randomQ = HISTORY_QUESTIONS[Math.floor(Math.random() * HISTORY_QUESTIONS.length)];
+                        setCurrentQuestion(randomQ);
+                        setCurrentStudentForQ(studentName);
+                        setShowAnswer(false);
+                        
+                        // 延遲一下顯示彈窗，讓使用者看到是誰被選中
+                        setTimeout(() => {
+                            setPicking(false);
+                            setShowQModal(true);
+                        }, 800);
+                    }
+                }, 100);
+            };
+
+            // 彈窗操作
+            const handleCloseQModal = () => {
+                setShowQModal(false);
+                setPickedIndex(null); // 清除高亮
+            };
+
+            const handleCorrectAnswer = () => {
+                if (currentStudentForQ) {
+                    setScores(prev => ({ ...prev, [currentStudentForQ]: (prev[currentStudentForQ] || 0) + 5 }));
+                    showNotification(`${currentStudentForQ} +5分！`);
+                }
+                handleCloseQModal();
+            };
+
+            // Drag & Drop & Click Logic (Same as before)
+            const handleDragStart = (e, index) => {
+                if (picking || isScoringMode) return;
+                setDraggedIndex(index);
+                e.dataTransfer.effectAllowed = "move";
+                setTimeout(() => {
+                    const el = document.getElementById(`seat-${classId}-${index}`);
+                    if (el) el.classList.add('dragging');
+                }, 0);
+            };
+
+            const handleDragEnd = () => {
+                document.querySelectorAll('.seat-card').forEach(el => {
+                    el.classList.remove('dragging');
+                    el.classList.remove('drag-over');
+                });
+                setDraggedIndex(null);
+                setDragOverIndex(null);
+            };
+
+            const handleDrop = (e, targetIndex) => {
+                e.preventDefault();
+                if (draggedIndex === null || draggedIndex === targetIndex) return;
+                swapSeats(draggedIndex, targetIndex);
+            };
+
+            const handleClick = (index) => {
+                if (picking) return;
+                if (isScoringMode) {
+                    const studentName = seats[index];
+                    if (studentName) {
+                        setScores(prev => ({ ...prev, [studentName]: (prev[studentName] || 0) + 5 }));
+                        showNotification(`${studentName} +5分！`);
+                        const el = document.getElementById(`seat-${classId}-${index}`);
+                        if(el) {
+                            const scoreEl = el.querySelector('.score-badge');
+                            if(scoreEl) {
+                                scoreEl.classList.remove('score-pop');
+                                void scoreEl.offsetWidth; 
+                                scoreEl.classList.add('score-pop');
+                            }
+                        }
+                    }
+                    return;
+                }
+                if (selectedSeatIndex === null) setSelectedSeatIndex(index);
+                else if (selectedSeatIndex === index) setSelectedSeatIndex(null);
+                else {
+                    swapSeats(selectedSeatIndex, index);
+                    setSelectedSeatIndex(null);
+                }
+            };
+
+            const swapSeats = (indexA, indexB) => {
+                const newSeats = [...seats];
+                [newSeats[indexA], newSeats[indexB]] = [newSeats[indexB], newSeats[indexA]];
+                setSeats(newSeats);
+                setPickedIndex(null); 
+                showNotification("已更新座位");
+            };
+
+            // Export/Import/Reset (Same as before)
+            const handleExportData = () => {
+                const dataStr = JSON.stringify({ seats, callCounts, scores, classId, date: new Date().toLocaleDateString() }, null, 2);
+                const blob = new Blob([dataStr], { type: "application/json" });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.download = `${classId}_座位紀錄_${new Date().toLocaleDateString()}.json`;
+                link.href = url;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                showNotification(`已下載 ${classId} 備份`);
+            };
+
+            const handleFileChange = (event) => {
+                const file = event.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    try {
+                        const data = JSON.parse(e.target.result);
+                        if (data.seats && data.callCounts) {
+                            const warning = (data.classId && data.classId !== classId) 
+                                ? `注意：這份紀錄似乎是屬於 ${data.classId} 的，你確定要載入到 ${classId} 嗎？` 
+                                : `確定要載入 ${data.date || '備份'} 的紀錄嗎？`;
+                            
+                            setConfirmModal({
+                                show: true,
+                                title: '讀取紀錄',
+                                message: warning,
+                                onConfirm: () => {
+                                    setSeats(data.seats);
+                                    setCallCounts(data.callCounts);
+                                    if (data.scores) setScores(data.scores);
+                                    showNotification("紀錄讀取成功！");
+                                    setConfirmModal({ show: false, ...confirmModal });
+                                }
+                            });
+                        } else { showNotification("檔案格式錯誤"); }
+                    } catch (error) { showNotification("讀取失敗"); }
+                    event.target.value = ''; 
+                };
+                reader.readAsText(file);
+            };
+
+            const handleReset = () => {
+                setConfirmModal({
+                    show: true,
+                    title: `重置 ${classId} 座位`,
+                    message: '確定要重置為初始名單嗎？(計數器和分數不會被清除)',
+                    onConfirm: () => {
+                        setSeats(fullList);
+                        setSelectedSeatIndex(null);
+                        setPickedIndex(null);
+                        showNotification("已重置座位");
+                        setConfirmModal({ show: false, ...confirmModal });
+                    }
+                });
+            };
+            
+            const handleResetCounts = () => {
+                 setConfirmModal({
+                    show: true,
+                    title: '清除紀錄',
+                    message: `確定要清除 ${classId} 所有學生的提問次數和分數嗎？`,
+                    onConfirm: () => {
+                        setCallCounts({});
+                        setScores({});
+                        showNotification("已清除所有紀錄");
+                        setConfirmModal({ show: false, ...confirmModal });
+                    }
+                });
+            };
+
+            const handleDownloadImage = async () => {
+                if (!printRef.current) return;
+                showNotification("正在生成圖片...");
+                try {
+                    const canvas = await html2canvas(printRef.current, { scale: 2, backgroundColor: "#ffffff", logging: false });
+                    const link = document.createElement('a');
+                    link.download = `${classId}_座位表_${new Date().toLocaleDateString()}.png`;
+                    link.href = canvas.toDataURL();
+                    link.click();
+                    showNotification("圖片下載成功！");
+                } catch (err) { showNotification("圖片生成失敗"); }
+            };
+
+            const showScoringFeatures = classId === 'S5';
+
+            return (
+                <div className="w-full max-w-4xl animate-fade-in relative">
+                    {/* Controls Row */}
+                    <div className="flex flex-col md:flex-row justify-between items-center gap-4 mb-6 no-print">
+                        <div className="flex gap-2 items-center">
+                             <input type="file" ref={fileInputRef} onChange={handleFileChange} style={{display: 'none'}} accept=".json" />
+                             <button onClick={handleExportData} className="px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg flex items-center gap-2 shadow-sm text-sm" title="備份此班紀錄">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+                                備份 {classId}
+                            </button>
+                            <button onClick={() => fileInputRef.current.click()} className="px-3 py-2 bg-green-100 hover:bg-green-200 text-green-800 rounded-lg flex items-center gap-2 shadow-sm text-sm" title="讀取備份">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
+                                讀取
+                            </button>
+                        </div>
+
+                        <div className="flex flex-wrap gap-2 justify-center bg-gray-100 p-2 rounded-xl">
+                            {showScoringFeatures && (
+                                <button 
+                                    onClick={() => setIsScoringMode(!isScoringMode)} 
+                                    className={`px-3 py-2 rounded-lg flex items-center gap-2 shadow-sm transition text-sm font-bold border
+                                        ${isScoringMode 
+                                            ? 'bg-green-600 text-white border-green-700 ring-2 ring-green-300' 
+                                            : 'bg-white text-green-700 border-green-200 hover:bg-green-50'
+                                        }`}
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v8"/><path d="M8 12h8"/></svg>
+                                    {isScoringMode ? "計分中..." : "計分模式"}
+                                </button>
+                            )}
+
+                            <button onClick={handleRandomPick} disabled={picking || isScoringMode} className={`px-4 py-2 text-white rounded-lg flex items-center gap-2 shadow-md transition transform hover:scale-105 ${(picking || isScoringMode) ? 'bg-gray-400 cursor-not-allowed' : 'bg-yellow-500 hover:bg-yellow-600'}`}>
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><path d="m16 8-8 8"/><path d="m8 8 8 8"/></svg>
+                                隨機提問
+                            </button>
+                            
+                            <div className="w-px h-8 bg-gray-300 mx-1"></div>
+                            
+                            <button onClick={handleResetCounts} className="px-3 py-2 bg-white hover:bg-red-50 text-gray-700 hover:text-red-600 border border-gray-200 rounded-lg text-sm" title="清除計數與分數">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                            </button>
+                            <button onClick={handleReset} className="px-3 py-2 bg-white hover:bg-gray-100 text-gray-700 border border-gray-200 rounded-lg text-sm" title="重置座位">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                            </button>
+                            <button onClick={handleDownloadImage} className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm" title="下載圖片">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Notification & Modal */}
+                    {notification && (
+                        <div className="fixed top-20 left-1/2 transform -translate-x-1/2 bg-gray-800 text-white px-4 py-2 rounded-full shadow-lg z-50 animate-fade-in-down whitespace-nowrap">
+                            {notification}
+                        </div>
+                    )}
+                    
+                    {/* Confirm Modal */}
+                    {confirmModal.show && (
+                        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[60] p-4 animate-fade-in">
+                            <div className="bg-white rounded-xl shadow-2xl max-w-sm w-full p-6">
+                                <h3 className="text-xl font-bold text-gray-900 mb-2">{confirmModal.title}</h3>
+                                <p className="text-gray-600 mb-6">{confirmModal.message}</p>
+                                <div className="flex justify-end gap-3">
+                                    <button onClick={() => setConfirmModal({ ...confirmModal, show: false })} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg font-medium">取消</button>
+                                    <button onClick={confirmModal.onConfirm} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium">確定</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Question Modal (NEW) */}
+                    {showQModal && currentQuestion && (
+                        <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[70] p-4 animate-fade-in">
+                            <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-8 transform transition-all scale-100 flex flex-col items-center text-center relative overflow-hidden">
+                                {/* Decorative BG */}
+                                <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-blue-500 to-purple-600"></div>
+                                
+                                <div className="mb-4">
+                                    <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-sm font-bold tracking-wide">
+                                        隨機提問
+                                    </span>
+                                </div>
+
+                                <h3 className="text-2xl font-bold text-gray-800 mb-2">
+                                    請 <span className="text-blue-600 underline decoration-wavy underline-offset-4">{currentStudentForQ}</span> 回答
+                                </h3>
+                                
+                                <div className="w-full bg-gray-50 p-6 rounded-xl border border-gray-100 mb-6 mt-4">
+                                    <p className="text-xl font-medium text-gray-700 leading-relaxed">
+                                        {currentQuestion.q}
+                                    </p>
+                                </div>
+
+                                {/* Answer Section */}
+                                {showAnswer ? (
+                                    <div className="w-full animate-fade-in mb-6">
+                                        <div className="text-sm text-gray-400 mb-1">正確答案</div>
+                                        <div className="text-lg font-bold text-green-600 bg-green-50 p-3 rounded-lg border border-green-100">
+                                            {currentQuestion.a}
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <button 
+                                        onClick={() => setShowAnswer(true)}
+                                        className="mb-6 text-blue-500 hover:text-blue-700 font-medium text-sm flex items-center gap-1 transition-colors"
+                                    >
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                                        顯示答案
+                                    </button>
+                                )}
+
+                                {/* Action Buttons */}
+                                <div className="flex gap-3 w-full justify-center">
+                                    <button 
+                                        onClick={handleCloseQModal}
+                                        className="px-6 py-2.5 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-xl font-bold transition-colors"
+                                    >
+                                        關閉
+                                    </button>
+                                    
+                                    {/* S5 Only: Scoring Button inside Modal */}
+                                    {showScoringFeatures && showAnswer && (
+                                        <button 
+                                            onClick={handleCorrectAnswer}
+                                            className="px-6 py-2.5 bg-green-500 hover:bg-green-600 text-white rounded-xl font-bold shadow-lg shadow-green-200 transition-all transform hover:-translate-y-0.5 flex items-center gap-2"
+                                        >
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                                            答對 (+5分)
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Seating Chart */}
+                    <div ref={printRef} className={`bg-white p-8 rounded-xl shadow-xl print-area w-full border transition-colors ${isScoringMode ? 'border-green-400 ring-4 ring-green-100' : 'border-gray-200'}`}>
+                        <div className="text-center mb-4 text-2xl font-bold text-gray-800 hidden print:block">
+                            {classId} 座位表
+                        </div>
+                        <div className="grid grid-cols-6 gap-3 md:gap-4 mb-8">
+                            {seats.map((student, index) => {
+                                const isSelected = selectedSeatIndex === index;
+                                const isDragOver = dragOverIndex === index;
+                                const isPicked = pickedIndex === index;
+                                const count = student ? (callCounts[student] || 0) : 0;
+                                const score = student ? (scores[student] || 0) : 0;
+                                const isEmpty = !student;
+                                
+                                let cursorClass = 'cursor-pointer';
+                                if (isScoringMode) cursorClass = isEmpty ? 'cursor-not-allowed' : 'cursor-cell';
+
+                                return (
+                                    <div
+                                        key={index}
+                                        id={`seat-${classId}-${index}`}
+                                        draggable={!picking && !isScoringMode}
+                                        onDragStart={(e) => handleDragStart(e, index)}
+                                        onDragEnd={handleDragEnd}
+                                        onDragOver={(e) => { e.preventDefault(); if(draggedIndex!==index) setDragOverIndex(index); }}
+                                        onDrop={(e) => handleDrop(e, index)}
+                                        onClick={() => handleClick(index)}
+                                        className={`
+                                            seat-card relative aspect-[4/3] flex flex-col items-center justify-center p-2 rounded-lg border-2 ${cursorClass}
+                                            ${isPicked ? 'winner-card' : ''}
+                                            ${isSelected 
+                                                ? 'border-blue-500 bg-blue-50 text-blue-700 shadow-md ring-2 ring-blue-300 ring-opacity-50' 
+                                                : isDragOver 
+                                                    ? 'border-dashed border-blue-500 bg-blue-50 scale-105'
+                                                    : !isPicked 
+                                                        ? (isScoringMode && !isEmpty ? 'hover:border-green-400 hover:bg-green-50' : 'border-gray-200 hover:border-blue-300 hover:shadow-sm bg-white')
+                                                        : ''
+                                            }
+                                            ${isEmpty && !isSelected && !isDragOver ? 'bg-gray-50 border-gray-100' : ''}
+                                        `}
+                                    >
+                                        <div className="absolute top-1 left-2 flex items-center gap-1">
+                                            <span className="text-[10px] text-gray-400 font-mono">{index + 1}</span>
+                                            {score > 0 && (
+                                                <span className="score-badge text-xs font-bold text-green-600 bg-green-100 px-1 rounded-sm border border-green-200">
+                                                    +{score}
+                                                </span>
+                                            )}
+                                        </div>
+
+                                        {count > 0 && !isEmpty && (
+                                            <div className="absolute top-1 right-1 bg-red-100 text-red-600 text-[10px] font-bold px-1.5 rounded-full border border-red-200 flex items-center justify-center min-w-[20px]">
+                                                {count}
+                                            </div>
+                                        )}
+                                        <div className="text-center z-10 w-full">
+                                            <span className={`font-bold text-base md:text-lg block truncate ${isSelected ? 'text-blue-700' : 'text-gray-700'} ${isEmpty ? 'text-gray-300 text-sm' : ''}`}>
+                                                {student || "空位"}
+                                            </span>
+                                        </div>
+                                        <div className={`absolute bottom-0 w-full h-1 rounded-b-lg ${isEmpty ? 'bg-gray-200' : 'bg-gray-100'}`}></div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                        <div className="w-full h-12 bg-gray-700 rounded-lg flex items-center justify-center text-gray-300 font-medium tracking-widest shadow-inner">
+                            黑板 ({classId})
+                        </div>
+                        <div className="mt-8 pt-4 border-t border-gray-100 flex justify-between text-sm text-gray-400">
+                            <span>全班人數: {seats.filter(s => s).length} 人</span>
+                            <span>更新日期: {new Date().toLocaleDateString()}</span>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const App = () => {
+            const [activeTab, setActiveTab] = useState('S4');
+
+            return (
+                <div className="min-h-screen p-4 md:p-8 flex flex-col items-center">
+                    <div className="w-full max-w-4xl mb-6 flex flex-col md:flex-row justify-between items-center gap-4 no-print">
+                        <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-layout-grid"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg>
+                            互動式座位表
+                        </h1>
+                        
+                        {/* Tabs */}
+                        <div className="bg-white p-1 rounded-xl shadow-sm border border-gray-200 flex">
+                            <button 
+                                onClick={() => setActiveTab('S4')}
+                                className={`px-6 py-2 rounded-lg font-medium transition-all ${activeTab === 'S4' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-500 hover:bg-gray-50'}`}
+                            >
+                                S4
+                            </button>
+                            <button 
+                                onClick={() => setActiveTab('S5')}
+                                className={`px-6 py-2 rounded-lg font-medium transition-all ${activeTab === 'S5' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-500 hover:bg-gray-50'}`}
+                            >
+                                S5
+                            </button>
+                        </div>
+                    </div>
+
+                    <Classroom 
+                        key={activeTab} 
+                        classId={activeTab} 
+                        initialStudentList={activeTab === 'S4' ? S4_STUDENTS : S5_STUDENTS} 
+                    />
+
+                    <div className="mt-8 text-xs text-gray-400 no-print text-center">
+                        提示：已新增「隋唐歷史題庫」與「問答彈窗」。<br/>
+                        S5 答對問題可直接加分。建議定期備份紀錄。
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
